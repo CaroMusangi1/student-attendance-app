@@ -1,99 +1,139 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { getDistance } = require('geolib');
 
 const app = express();
-app.use(express.json());
+
+// --- MIDDLEWARE ---
+app.use(cors());
+app.use(express.json({ limit: '10mb' })); // Allows for large selfie strings if the student chooses to take one
 
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/student_attendance',
 });
 
-//to verify the DB is actually reachable
+// Database Connection Check
 pool.connect((err, client, release) => {
-  if (err) {
-    return console.error('❌ Database connection error:', err.stack);
-  }
-  console.log('✅ Database connected successfully!');
-  release();
+    if (err) {
+        return console.error('❌ Database connection error:', err.stack);
+    }
+    console.log('✅ Database connected successfully!');
+    release();
 });
-//Health Check
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        database: 'Connected', 
-        timestamp: new Date().toLocaleString() 
-    });
-});
-// --- AUTHENTICATION ---
+
+// --- LOGIN ROUTE ---
 app.post('/api/login', async (req, res) => {
     const { email, password, deviceId } = req.body;
+    
     try {
-        const userRes = await pool.query('SELECT * FROM students WHERE email = $1', [email]);
+        const cleanedEmail = email?.trim().toLowerCase();
+        const userRes = await pool.query('SELECT * FROM students WHERE email = $1', [cleanedEmail]);
         const user = userRes.rows[0];
 
-        if (user && await bcrypt.compare(password, user.password_hash)) {
-            // Check Device ID for proxy prevention [cite: 4]
+        if (!user) return res.status(401).json({ error: "Invalid credentials" });
+
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+
+        if (isMatch) {
+            // Device ID Lock Logic
             if (user.device_id && user.device_id !== deviceId) {
-                return res.status(403).json({ error: "Device mismatch. Proxy sign-in blocked." });
+                return res.status(403).json({ error: "Device mismatch. Use registered phone." });
             }
+            
             if (!user.device_id) {
                 await pool.query('UPDATE students SET device_id = $1 WHERE student_id = $2', [deviceId, user.student_id]);
             }
 
-            const token = jwt.sign({ id: user.student_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-            res.json({ token, studentId: user.student_id });
+            const token = jwt.sign(
+                { id: user.student_id }, 
+                process.env.JWT_SECRET || 'secret123', 
+                { expiresIn: '1h' }
+            );
+
+            return res.status(200).json({ 
+                token, 
+                studentId: user.student_id,
+                name: user.name 
+            });
         } else {
-            res.status(401).json({ error: "Invalid credentials" });
+            return res.status(401).json({ error: "Invalid credentials" });
         }
     } catch (err) {
-        res.status(500).json({ error: "Server error during login" });
+        console.error("🔥 Login Error:", err);
+        return res.status(500).json({ error: "Internal server error" });
     }
 });
 
-// --- GPS ATTENDANCE LOGGING ---
+// --- ATTENDANCE ROUTE (GPS Mandatory, Selfie Optional) ---
 app.post('/api/attendance', async (req, res) => {
-    const { studentId, classId, lat, long } = req.body;
-
+    const { studentId, classId, lat, long, photoUri } = req.body;
+    
     try {
-        // 1. Get Class Location
+        // 1. Get Class Location & Radius
         const classRes = await pool.query('SELECT * FROM classes WHERE class_id = $1', [classId]);
-        const classroom = classRes.rows[0];
+        if (classRes.rows.length === 0) return res.status(404).json({ error: "Class not found." });
 
-        // 2. Geofence Calculation [cite: 3, 16]
+        const classroom = classRes.rows[0];
+        
+        // 2. Calculate Distance
         const distance = getDistance(
             { latitude: lat, longitude: long },
             { latitude: parseFloat(classroom.classroom_lat), longitude: parseFloat(classroom.classroom_long) }
         );
 
+        // 3. Geofence Validation (The "Only" Requirement)
         if (distance <= classroom.radius_meters) {
-            await pool.query('INSERT INTO attendance (student_id, class_id) VALUES ($1, $2)', [studentId, classId]);
-            res.json({ message: "Attendance marked successfully!" });
+            
+            // 4. Save to Database
+            // This will work regardless of whether photoUri is provided or null
+            await pool.query(
+                'INSERT INTO attendance (student_id, class_id, sign_in_time) VALUES ($1, $2, CURRENT_TIMESTAMP)', 
+                [studentId, classId]
+            );
+
+            return res.status(200).json({ 
+                message: "Attendance marked successfully!", 
+                distance: `${distance}m` 
+            });
+
         } else {
-            res.status(403).json({ error: `You are too far (${distance}m away).` });
+            // If they are outside the radius, show the error with exact meters
+            return res.status(403).json({ 
+                error: `Access Denied: You are ${distance}m away. You must be within ${classroom.radius_meters}m of the classroom.` 
+            });
         }
+
     } catch (err) {
-        if (err.code === '23505') return res.status(400).json({ error: "Already signed in today." });
-        res.status(500).json({ error: "Database error." });
+        // Handle Duplicate Entry (Student trying to sign in twice same day)
+        if (err.code === '23505') {
+            return res.status(400).json({ error: "You have already signed in for this class today." });
+        }
+        console.error("🔥 Attendance Error:", err);
+        res.status(500).json({ error: "Database error while saving attendance." });
     }
 });
 
-// --- ANALYTICS REPORTS ---
-app.get('/api/reports/:classId', async (req, res) => {
+// --- GET CLASS DETAILS ---
+app.get('/api/class/:id', async (req, res) => {
     try {
-        const report = await pool.query(
-            `SELECT s.name, a.sign_in_time FROM attendance a 
-             JOIN students s ON a.student_id = s.student_id 
-             WHERE a.class_id = $1`, [req.params.classId]
-        );
-        res.json(report.rows);
+        const classId = req.params.id;
+        const result = await pool.query('SELECT * FROM classes WHERE class_id = $1', [classId]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Class not found" });
+        }
+        res.json(result.rows[0]);
     } catch (err) {
-        res.status(500).json({ error: "Could not generate report." });
+        console.error("🔥 Class Fetch Error:", err);
+        res.status(500).json({ error: "Server error fetching class" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on http://192.168.0.101:${PORT}`);
+});
