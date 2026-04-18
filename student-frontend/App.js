@@ -1,19 +1,28 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, SafeAreaView, StatusBar } from 'react-native';
+import React, { useState } from 'react'; // <--- THIS FIXES THE ERROR
+import { StyleSheet, SafeAreaView, StatusBar } from 'react-native';
 import LoginScreen from './src/screens/LoginScreen';
 import AttendanceScreen from './src/screens/AttendanceScreen';
+import LecturerScreen from './src/screens/LecturerDashboard'; // Ensure this file exists!
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userRole, setUserRole] = useState(null); 
   const [userToken, setUserToken] = useState(null);
-  const [userId, setUserId] = useState(null); // ADDED: To track the student's DB ID
+  const [userId, setUserId] = useState(null);
 
-  // Updated to accept both token and studentId from the LoginScreen
-  const handleLoginSuccess = (token, studentId) => {
-    console.log("Login Success! Student ID:", studentId);
+  const handleLoginSuccess = (token, id, name, role) => {
+    console.log(`Login Success! Role: ${role}, ID: ${id}`);
     setUserToken(token);
-    setUserId(studentId); // Store the ID for the attendance record
+    setUserId(id);
+    setUserRole(role); 
     setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setUserRole(null);
+    setUserId(null);
+    setUserToken(null);
   };
 
   return (
@@ -21,11 +30,21 @@ export default function App() {
       <StatusBar barStyle="dark-content" backgroundColor="#f0fdf4" />
       
       {!isAuthenticated ? (
-        // Pass the updated handler to Login
         <LoginScreen onLoginSuccess={handleLoginSuccess} />
       ) : (
-        // Pass both the token AND the studentId to Attendance
-        <AttendanceScreen token={userToken} studentId={userId} />
+        // Switching logic based on the role returned from your server
+        userRole === 'lecturer' ? (
+          <LecturerScreen 
+            onLogout={handleLogout} 
+            lecturerId={userId} 
+          />
+        ) : (
+          <AttendanceScreen 
+            token={userToken} 
+            studentId={userId} 
+            onLogout={handleLogout} 
+          />
+        )
       )}
     </SafeAreaView>
   );
@@ -34,6 +53,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0fdf4', // Light Mint Background
+    backgroundColor: '#f0fdf4',
   },
 });
