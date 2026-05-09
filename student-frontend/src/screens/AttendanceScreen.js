@@ -7,19 +7,20 @@ import * as Location from 'expo-location';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MapPin, CheckCircle, Navigation, Camera as CameraIcon, X, Info, LogOut, ChevronDown } from 'lucide-react-native';
 
-const AttendanceScreen = ({ token, studentId, onLogout }) => {
+const AttendanceScreen = ({ studentId, onLogout }) => {
   const [location, setLocation] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [hasSignedIn, setHasSignedIn] = useState(false); // Track if user is already signed in
+  const [hasSignedIn, setHasSignedIn] = useState(false);
+  const [isSessionActive, setIsSessionActive] = useState(false); 
   const [selectedClass, setSelectedClass] = useState({ id: 1, name: 'Advanced Fluid Mechanics' });
   const [showClassPicker, setShowClassPicker] = useState(false);
   
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraVisible, setCameraVisible] = useState(false);
-  const [capturedImage, setCapturedImage] = useState(null);
+  const [capturedImage, setCapturedImage] = useState(null); 
   const cameraRef = useRef(null);
 
-  const SERVER_URL = 'http://192.168.0.101:3000';
+  const SERVER_URL = 'http://192.168.0.103:3000'; 
 
   const classList = [
     { id: 1, name: 'Advanced Fluid Mechanics' },
@@ -27,45 +28,60 @@ const AttendanceScreen = ({ token, studentId, onLogout }) => {
     { id: 3, name: 'Simulation & Modelling' }
   ];
 
-  // 1. Check Attendance Status when screen loads or Class changes
+  // 1. Sync Status (Check if class is active)
   useEffect(() => {
-    const checkStatus = async () => {
+    const syncStatus = async () => {
+      if (!studentId || !selectedClass.id) return;
       try {
-        const response = await fetch(`${SERVER_URL}/api/attendance/status/${studentId}/${selectedClass.id}`);
-        const data = await response.json();
-        setHasSignedIn(Boolean(data.exists));
+        const statusReq = await fetch(`${SERVER_URL}/api/class-status/${selectedClass.id}`);
+        const statusData = await statusReq.json();
+        // FORCE state update based on server
+        setIsSessionActive(!!statusData.isActive);
+
+        const attReq = await fetch(`${SERVER_URL}/api/attendance/status/${studentId}/${selectedClass.id}`);
+        const attData = await attReq.json();
+        setHasSignedIn(!!attData.exists);
       } catch (err) {
-        console.log("Status check failed. Ensure server is running and /api/attendance/status exists.");
+        setIsSessionActive(false);
       }
     };
-    if (studentId && selectedClass.id) {
-        checkStatus();
-    }
+    syncStatus();
   }, [studentId, selectedClass.id]);
 
-  // 2. Fetch Location on load
+  // 2. Location Tracking
   useEffect(() => {
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert("Permission Denied", "Location access is required for attendance.");
-        return;
-      }
-      let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (status !== 'granted') return;
+      let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setLocation(loc);
     })();
   }, []);
 
-  const handleLogoutPress = () => {
-    Alert.alert("Logout", "Return to login screen?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Logout", onPress: () => onLogout() }
-    ]);
+  const takePicture = async () => {
+    if (cameraRef.current) {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.2, base64: true });
+      setCapturedImage(`data:image/jpg;base64,${photo.base64}`);
+      setCameraVisible(false);
+    }
   };
 
   const handleMarkAttendance = async () => {
+    // CHECK 1: SESSION STATUS (The absolute priority)
+    if (!isSessionActive) {
+      Alert.alert("Access Denied ❌", `The session for ${selectedClass.name} has not been started yet.`);
+      return;
+    }
+
+    // CHECK 2: GPS
     if (!location) {
-      Alert.alert("GPS Error", "Wait for coordinates...");
+      Alert.alert("GPS Error", "Tracking location...");
+      return;
+    }
+
+    // CHECK 3: SELFIE (Only reached if Session is Active)
+    if (!capturedImage) {
+      Alert.alert("Verification Required", "Please take a selfie first to verify your identity.");
       return;
     }
 
@@ -86,24 +102,18 @@ const AttendanceScreen = ({ token, studentId, onLogout }) => {
       const data = await response.json();
       if (response.ok) {
         Alert.alert("Verified ✅", `Attendance marked for ${selectedClass.name}`);
-        setHasSignedIn(true); // Update UI immediately
+        setHasSignedIn(true);
       } else {
-        Alert.alert("Access Denied ❌", data.error);
+        Alert.alert("Access Denied ❌", data.error || "Attendance denied.");
       }
     } catch (error) {
-      Alert.alert("Sync Failed", "Server connection error.");
+      Alert.alert("Sync Failed", "Check server connection.");
     } finally {
       setLoading(false);
     }
   };
 
-  const takePicture = async () => {
-    if (cameraRef.current) {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, base64: true });
-      setCapturedImage(photo.uri);
-      setCameraVisible(false);
-    }
-  };
+  if (!permission) return <View style={styles.container}><ActivityIndicator size="large" color="#10b981" /></View>;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -113,7 +123,7 @@ const AttendanceScreen = ({ token, studentId, onLogout }) => {
           <Text style={styles.welcome}>Student Dashboard</Text>
           <Text style={styles.date}>{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })}</Text>
         </View>
-        <TouchableOpacity onPress={handleLogoutPress} style={styles.logoutBtn}>
+        <TouchableOpacity onPress={onLogout} style={styles.logoutBtn}>
           <LogOut color="#059669" size={24} />
         </TouchableOpacity>
       </View>
@@ -122,7 +132,7 @@ const AttendanceScreen = ({ token, studentId, onLogout }) => {
       <TouchableOpacity style={styles.statusCard} onPress={() => setShowClassPicker(true)}>
         <View style={styles.row}>
           <MapPin color="#10b981" size={24} />
-          <Text style={styles.statusTitle}>Active Session (Tap to change)</Text>
+          <Text style={styles.statusTitle}>Current Unit (Tap to change)</Text>
           <ChevronDown color="#10b981" size={20} style={{marginLeft: 'auto'}} />
         </View>
         <Text style={styles.className}>{selectedClass.name}</Text>
@@ -135,57 +145,80 @@ const AttendanceScreen = ({ token, studentId, onLogout }) => {
         </View>
       </TouchableOpacity>
 
-      {/* MAIN ATTENDANCE BUTTON */}
+      {/* MAIN BUTTON */}
       <TouchableOpacity 
-        style={[styles.mainButton, (hasSignedIn || !location || loading) && styles.buttonDisabled]} 
+        style={[
+          styles.mainButton, 
+          (hasSignedIn || !location || loading || !isSessionActive) && styles.buttonDisabled
+        ]} 
         onPress={handleMarkAttendance}
-        disabled={loading || !location || hasSignedIn}
+        disabled={loading || hasSignedIn}
       >
         {loading ? <ActivityIndicator color="#fff" size="large" /> : (
-          <>
+          <View style={{ alignItems: 'center' }}>
             <CheckCircle color="#fff" size={50} />
-            <Text style={styles.buttonText}>{hasSignedIn ? "In Class" : "Sign In"}</Text>
-          </>
+            <Text style={styles.buttonText}>
+              {!isSessionActive ? "Locked" : (hasSignedIn ? "Verified" : "Sign In")}
+            </Text>
+          </View>
         )}
       </TouchableOpacity>
 
       {hasSignedIn && (
-        <Text style={styles.successMessage}>
-          ✅ You have successfully signed in for this session.
+        <Text style={styles.successMessage}>✅ Attendance successfully recorded.</Text>
+      )}
+
+      {!isSessionActive && !hasSignedIn && (
+        <Text style={[styles.successMessage, {color: '#991b1b'}]}>
+          ⚠️ This session has not been started yet.
         </Text>
       )}
 
-      {/* SELFIE VERIFY */}
-      <TouchableOpacity style={styles.secondaryButton} onPress={() => setCameraVisible(true)}>
+      {/* SELFIE */}
+      <TouchableOpacity 
+        style={[styles.secondaryButton, (hasSignedIn || !isSessionActive) && {opacity: 0.6}]} 
+        onPress={() => !hasSignedIn && isSessionActive && setCameraVisible(true)}
+        disabled={hasSignedIn || !isSessionActive}
+      >
         {capturedImage ? <Image source={{ uri: capturedImage }} style={styles.miniPreview} /> : <CameraIcon color="#059669" size={22} />}
-        <Text style={styles.secondaryText}>{capturedImage ? "Selfie Verified" : "Add Verification Selfie"}</Text>
+        <Text style={styles.secondaryText}>{capturedImage ? "Selfie Captured" : "Take Verification Selfie"}</Text>
       </TouchableOpacity>
 
-      {/* RULES CARD */}
+      {/* RULES CARD - RESTORED ORIGINAL RULES */}
       <View style={styles.rulesCard}>
         <View style={styles.row}>
           <Info color="#065f46" size={18} />
-          <Text style={styles.rulesTitle}>Attendance Protocol</Text>
+          <Text style={styles.rulesTitle}>System Integrity</Text>
         </View>
         <Text style={styles.ruleItem}>• Facial verification matches background with lecture hall coordinates.</Text>
         <Text style={styles.ruleItem}>• Ensure your device clock is synchronized with network time.</Text>
         <Text style={styles.ruleItem}>• Proxy signatures are detected via unique device hardware ID.</Text>
       </View>
 
-      {/* CLASS PICKER MODAL */}
+      {/* PICKER MODAL */}
       <Modal visible={showClassPicker} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.pickerContainer}>
-            <Text style={styles.pickerTitle}>Select Class</Text>
+            <Text style={styles.pickerTitle}>Select Unit</Text>
             {classList.map(c => (
-              <TouchableOpacity key={c.id} style={styles.pickerItem} onPress={() => { setSelectedClass(c); setShowClassPicker(false); }}>
+              <TouchableOpacity 
+                key={c.id} 
+                style={styles.pickerItem} 
+                onPress={() => { 
+                  // CRITICAL: Reset states immediately upon selection
+                  setSelectedClass(c); 
+                  setIsSessionActive(false); 
+                  setCapturedImage(null); 
+                  setShowClassPicker(false); 
+                }}
+              >
                 <Text style={styles.pickerItemText}>{c.name}</Text>
               </TouchableOpacity>
             ))}
             <TouchableOpacity onPress={() => setShowClassPicker(false)} style={styles.closePicker}>
-              <Text style={{color: '#dc2626', fontWeight: 'bold', marginTop: 10}}>Cancel</Text>
+              <Text style={{color: '#dc2626', fontWeight: 'bold', marginTop: 15}}>Cancel</Text>
             </TouchableOpacity>
-          </View>
+          </View> 
         </View>
       </Modal>
 
@@ -220,10 +253,10 @@ const styles = StyleSheet.create({
   coordRow: { flexDirection: 'row', alignItems: 'center' },
   coordText: { fontSize: 13, color: '#34d399', marginLeft: 8 },
   mainButton: { backgroundColor: '#10b981', height: 150, borderRadius: 75, justifyContent: 'center', alignItems: 'center', alignSelf: 'center', width: 150, elevation: 8, marginBottom: 25 },
-  buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  buttonDisabled: { backgroundColor: '#a7f3d0' },
+  buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 5 },
+  buttonDisabled: { backgroundColor: '#94a3b8' },
   successMessage: { color: '#059669', fontWeight: 'bold', textAlign: 'center', marginTop: 10, fontSize: 14 },
-  secondaryButton: { flexDirection: 'row', borderSize: 2, borderColor: '#10b981', borderRadius: 15, height: 55, justifyContent: 'center', alignItems: 'center', borderWidth: 2 },
+  secondaryButton: { flexDirection: 'row', borderColor: '#10b981', borderRadius: 15, height: 55, justifyContent: 'center', alignItems: 'center', borderWidth: 2, marginTop: 10 },
   secondaryText: { color: '#064e3b', fontWeight: 'bold', marginLeft: 10 },
   miniPreview: { width: 30, height: 30, borderRadius: 15 },
   rulesCard: { backgroundColor: '#ecfdf5', padding: 20, borderRadius: 18, marginTop: 20, borderWidth: 1, borderColor: '#a7f3d0' },

@@ -1,8 +1,8 @@
-import React, { useState } from 'react'; // <--- THIS FIXES THE ERROR
+import React, { useState } from 'react';
 import { StyleSheet, SafeAreaView, StatusBar } from 'react-native';
 import LoginScreen from './src/screens/LoginScreen';
 import AttendanceScreen from './src/screens/AttendanceScreen';
-import LecturerScreen from './src/screens/LecturerDashboard'; // Ensure this file exists!
+import LecturerScreen from './src/screens/LecturerDashboard';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

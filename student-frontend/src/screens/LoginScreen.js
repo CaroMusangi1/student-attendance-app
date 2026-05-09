@@ -4,14 +4,15 @@ import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform 
 } from 'react-native';
 import * as Device from 'expo-device';
-import { User, Lock, Smartphone, GraduationCap, Briefcase } from 'lucide-react-native';
+import { User, Lock, Smartphone, GraduationCap, Briefcase, Eye, EyeOff } from 'lucide-react-native';
 
 const LoginScreen = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('student'); // 'student' or 'lecturer'
+  const [role, setRole] = useState('student'); 
   const [loading, setLoading] = useState(false);
   const [deviceId, setDeviceId] = useState('');
+  const [showPassword, setShowPassword] = useState(false); // New state for visibility
 
   // Capture unique Device ID on component load
   useEffect(() => {
@@ -30,13 +31,13 @@ const LoginScreen = ({ onLoginSuccess }) => {
 
     setLoading(true);
     try {
-      const response = await fetch('http://192.168.0.101:3000/api/login', {
+      const response = await fetch('http://192.168.0.103:3000/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           email: email.trim(), 
           password: password, 
-          role: role, // Explicitly sending the role
+          role: role, 
           deviceId: deviceId 
         }),
       });
@@ -44,7 +45,6 @@ const LoginScreen = ({ onLoginSuccess }) => {
       const data = await response.json();
 
       if (response.ok) {
-        // Pass token, userId, and role back to handle navigation in App.js
         onLoginSuccess(data.token, data.userId, data.name, role);
       } else {
         Alert.alert("Login Failed", data.error || "Invalid credentials");
@@ -55,6 +55,13 @@ const LoginScreen = ({ onLoginSuccess }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleForgotPassword = () => {
+    Alert.alert(
+      "Reset Password",
+      "Please contact the University ICT helpdesk or visit the Registrar's office to reset your portal password."
+    );
   };
 
   return (
@@ -68,7 +75,6 @@ const LoginScreen = ({ onLoginSuccess }) => {
           <Text style={styles.subtitle}>Select your role and sign in</Text>
         </View>
 
-        {/* --- ROLE TOGGLE SECTION --- */}
         <View style={styles.toggleWrapper}>
           <TouchableOpacity 
             style={[styles.toggleBtn, role === 'student' && styles.activeBtn]} 
@@ -108,11 +114,18 @@ const LoginScreen = ({ onLoginSuccess }) => {
             placeholderTextColor="#9ca3af"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            secureTextEntry={!showPassword} // Toggle logic
           />
+          <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+            {showPassword ? <EyeOff color="#10b981" size={20} /> : <Eye color="#10b981" size={20} />}
+          </TouchableOpacity>
         </View>
 
-        {/* Show Hardware ID only for students to emphasize Device Lock security */}
+        {/* Forgot Password Link */}
+        <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotBtn}>
+          <Text style={styles.forgotText}>Forgot Password?</Text>
+        </TouchableOpacity>
+
         {role === 'student' && (
           <View style={styles.deviceInfo}>
             <Smartphone color="#10b981" size={14} />
@@ -144,17 +157,17 @@ const styles = StyleSheet.create({
   header: { marginBottom: 30, alignItems: 'center' },
   title: { fontSize: 28, fontWeight: 'bold', color: '#064e3b', letterSpacing: 0.5 },
   subtitle: { color: '#10b981', fontSize: 14, marginTop: 5, fontWeight: '500' },
-  
-  // Toggle Styles
   toggleWrapper: { flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 15, padding: 5, marginBottom: 25 },
   toggleBtn: { flex: 1, flexDirection: 'row', paddingVertical: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   activeBtn: { backgroundColor: '#10b981' },
   toggleText: { color: '#64748b', fontWeight: 'bold', marginLeft: 8 },
   activeText: { color: '#fff' },
-
-  inputContainer: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1.5, borderBottomColor: '#d1fae5', marginBottom: 25 },
+  inputContainer: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1.5, borderBottomColor: '#d1fae5', marginBottom: 15 }, // Adjusted margin
   icon: { marginRight: 12 },
   input: { flex: 1, height: 50, color: '#064e3b', fontSize: 16 },
+  eyeBtn: { padding: 10 }, // New eye button style
+  forgotBtn: { alignSelf: 'flex-end', marginBottom: 20 }, // New forgot button style
+  forgotText: { color: '#059669', fontSize: 13, fontWeight: '600' },
   deviceInfo: { flexDirection: 'row', alignItems: 'center', marginBottom: 25, backgroundColor: '#ecfdf5', padding: 10, borderRadius: 10 },
   deviceText: { fontSize: 12, color: '#059669', marginLeft: 6, fontWeight: '500' },
   button: { backgroundColor: '#10b981', height: 60, borderRadius: 15, justifyContent: 'center', alignItems: 'center', elevation: 4 },

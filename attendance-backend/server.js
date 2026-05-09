@@ -5,6 +5,7 @@ const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { getDistance } = require('geolib');
+const os = require('os');
 
 const app = express();
 
@@ -15,7 +16,11 @@ app.use(express.json({ limit: '10mb' }));
 // GLOBAL LOGGER
 app.use((req, res, next) => {
     console.log(`\n[${new Date().toLocaleTimeString()}] ${req.method} to ${req.url}`);
-    if (req.method === 'POST') console.log("Payload:", req.body);
+    if (req.method === 'POST' && req.url !== '/api/attendance') {
+        console.log("Payload:", req.body);
+    } else if (req.url === '/api/attendance') {
+        console.log("Payload: [Attendance Data Received]");
+    }
     next();
 });
 
@@ -42,7 +47,6 @@ app.post('/api/login', async (req, res) => {
         const userQuery = await pool.query(`SELECT * FROM ${tableName} WHERE email = $1`, [email]);
 
         if (userQuery.rows.length === 0) {
-            console.log(`❌ User "${email}" not found`);
             return res.status(401).json({ error: "Invalid email or password" });
         }
 
@@ -53,30 +57,15 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ error: "Invalid email or password" });
         }
 
-        // --- DEVICE ID CHECK (Students Only) ---
         if (role === 'student') {
             if (user.device_id && user.device_id !== deviceId) {
-                console.log("❌ Device Lock Violation");
-                return res.status(403).json({ error: "Your account is locked to another device." });
+                return res.status(403).json({ error: "Account locked to another device." });
             }
-
             if (!user.device_id) {
-                try {
-                    await pool.query('UPDATE students SET device_id = $1 WHERE student_id = $2', [deviceId, user.student_id]);
-                    console.log("✅ Device ID paired successfully.");
-                } catch (dbErr) {
-                    if (dbErr.code === '23505') {
-                        return res.status(403).json({ 
-                            error: "Device Error: This phone is already registered to another student." 
-                        });
-                    }
-                    throw dbErr;
-                }
+                await pool.query('UPDATE students SET device_id = $1 WHERE student_id = $2', [deviceId, user.student_id]);
             }
         }
 
-        // --- FINAL SUCCESS RESPONSE ---
-        console.log(`✅ Login successful: ${user.name}`);
         res.status(200).json({
             message: "Login successful",
             userId: user[idColumn],
@@ -85,19 +74,66 @@ app.post('/api/login', async (req, res) => {
         });
 
     } catch (err) {
-        console.error("🔥 Global Login Error:", err);
+        console.error("🔥 Login Error:", err);
         res.status(500).json({ error: "Internal Server Error" });
     }
-}); // <--- THIS BRACKET WAS MISSING
+});
+
+// --- SESSION CONTROL ROUTES (UPDATED FOR SINGLE SESSION RULE) ---
+app.post('/api/lecturer/toggle-session', async (req, res) => {
+    const { classId, status } = req.body;
+    try {
+        if (status === true) {
+            // STEP 1: Turn OFF all other sessions first (Demo Rule)
+            await pool.query('UPDATE classes SET is_active = false');
+            
+            // STEP 2: Turn ON only the selected session
+            await pool.query('UPDATE classes SET is_active = true WHERE class_id = $1', [classId]);
+            console.log(`📡 Clean Start: Class ${classId} is now the ONLY active session.`);
+        } else {
+            // Simply turn off the selected session
+            await pool.query('UPDATE classes SET is_active = false WHERE class_id = $1', [classId]);
+            console.log(`📡 Session for Class ${classId} ended.`);
+        }
+        
+        res.status(200).json({ message: `Session ${status ? 'started' : 'ended'} successfully.` });
+    } catch (err) {
+        console.error("🔥 Toggle Error:", err.message);
+        res.status(500).json({ error: "Failed to toggle session status" });
+    }
+});
+
+app.get('/api/class-status/:classId', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT is_active FROM classes WHERE class_id = $1', [req.params.classId]);
+        if (result.rows.length === 0) return res.status(404).json({ error: "Class not found" });
+        res.json({ isActive: result.rows[0].is_active });
+    } catch (err) {
+        res.status(500).json({ error: "Server error" });
+    }
+});
 
 // --- ATTENDANCE ROUTE ---
 app.post('/api/attendance', async (req, res) => {
-    const { studentId, classId, lat, long } = req.body;
+    const { studentId, classId, lat, long, photoUri } = req.body;
+    
     try {
-        const classRes = await pool.query('SELECT * FROM classes WHERE class_id = $1', [classId]);
-        if (classRes.rows.length === 0) return res.status(404).json({ error: "Class not found." });
+        const sID = parseInt(studentId);
+        const cID = parseInt(classId);
+
+        const classRes = await pool.query('SELECT * FROM classes WHERE class_id = $1', [cID]);
+        if (classRes.rows.length === 0) {
+            return res.status(404).json({ error: "Class not found." });
+        }
 
         const classroom = classRes.rows[0];
+
+        // Ensure session is actually active
+        if (!classroom.is_active) {
+            return res.status(403).json({ error: "Attendance window closed: Session not active." });
+        }
+
+        // Geofencing Check
         const distance = getDistance(
             { latitude: lat, longitude: long },
             { latitude: parseFloat(classroom.classroom_lat), longitude: parseFloat(classroom.classroom_long) }
@@ -105,36 +141,32 @@ app.post('/api/attendance', async (req, res) => {
 
         if (distance <= classroom.radius_meters) {
             await pool.query(
-                'INSERT INTO attendance (student_id, class_id, sign_in_time) VALUES ($1, $2, CURRENT_TIMESTAMP)', 
-                [studentId, classId]
+                `INSERT INTO attendance 
+                (student_id, class_id, lat, long, photo_url, status, sign_in_time, attendance_date) 
+                VALUES ($1, $2, $3, $4, $5, 'Present', NOW(), CURRENT_DATE)`, 
+                [sID, cID, lat || 0, long || 0, photoUri || 'no-photo']
             );
-            return res.status(200).json({ message: "Attendance marked successfully!", distance: `${distance}m` });
+            console.log(`✅ Attendance marked for student ${sID} in class ${cID}`);
+            return res.status(200).json({ message: "Attendance marked!", distance: `${distance}m` });
         } else {
-            return res.status(403).json({ error: `Access Denied: You are ${distance}m away.` });
+            return res.status(403).json({ error: `Too far from classroom (${distance}m away).` });
         }
     } catch (err) {
-        if (err.code === '23505') return res.status(400).json({ error: "Already signed in today." });
+        if (err.code === '23505') {
+            return res.status(400).json({ error: "You have already signed in today." });
+        }
+        console.error("🔥 DB Error:", err.message);
         res.status(500).json({ error: "Database error" });
     }
 });
 
 // --- UTILITY ROUTES ---
-app.get('/api/class/:id', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM classes WHERE class_id = $1', [req.params.id]);
-        if (result.rows.length === 0) return res.status(404).json({ error: "Class not found" });
-        res.json(result.rows[0]);
-    } catch (err) {
-        res.status(500).json({ error: "Server error" });
-    }
-});
-
 app.get('/api/attendance/status/:studentId/:classId', async (req, res) => {
     const { studentId, classId } = req.params;
     try {
         const result = await pool.query(
-            'SELECT * FROM attendance WHERE student_id = $1 AND class_id = $2 AND sign_in_time::date = CURRENT_DATE',
-            [studentId, classId]
+            'SELECT * FROM attendance WHERE student_id = $1 AND class_id = $2 AND attendance_date = CURRENT_DATE',
+            [parseInt(studentId), parseInt(classId)]
         );
         res.json({ exists: result.rows.length > 0 });
     } catch (err) {
@@ -143,31 +175,42 @@ app.get('/api/attendance/status/:studentId/:classId', async (req, res) => {
 });
 
 app.get('/api/lecturer/report/:lecturerId', async (req, res) => {
-    const { lecturerId } = req.params;
     try {
         const result = await pool.query(`
-            SELECT 
-                a.log_id AS attendance_id, 
-                COALESCE(s.name, 'Unknown Student') AS student_name, 
-                COALESCE(c.class_name, 'Unknown Class') AS class_name, 
-                TO_CHAR(a.sign_in_time, 'HH24:MI:SS') AS time, 
-                TO_CHAR(a.attendance_date, 'DD-MM-YYYY') AS date
+            SELECT a.log_id, s.name as student_name, c.class_name, 
+            TO_CHAR(a.sign_in_time, 'HH24:MI:SS') as time, 
+            TO_CHAR(a.attendance_date, 'DD-MM-YYYY') as date
             FROM attendance a
             LEFT JOIN students s ON a.student_id = s.student_id
             LEFT JOIN classes c ON a.class_id = c.class_id
             WHERE c.lecturer_id = $1
             ORDER BY a.sign_in_time DESC
-        `, [lecturerId]);
-        
-        console.log(`📊 Success! Found ${result.rows.length} records for Lecturer ${lecturerId}`);
+        `, [req.params.lecturerId]);
         res.status(200).json(result.rows);
     } catch (err) {
-        console.error("🔥 SQL Error:", err.message);
-        res.status(500).json({ error: "Database query failed" });
+        res.status(500).json({ error: "Report failed" });
     }
 });
 
+// --- DYNAMIC IP DETECTION ---
+const getLocalExternalIP = () => {
+    const interfaces = os.networkInterfaces();
+    for (const devName in interfaces) {
+        const iface = interfaces[devName];
+        for (let i = 0; i < iface.length; i++) {
+            const alias = iface[i];
+            if (alias.family === 'IPv4' && alias.address !== '127.0.0.1' && !alias.internal) {
+                return alias.address;
+            }
+        }
+    }
+    return '0.0.0.0';
+};
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on http://192.168.0.101:${PORT}`);
+
+app.listen(PORT, () => {
+    console.log('-------------------------------------------');
+    console.log(`🚀 Attendance Server Live on Port ${PORT}`);
+    console.log('-------------------------------------------');
 });

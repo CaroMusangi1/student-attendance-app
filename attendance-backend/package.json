@@ -1,12 +1,18 @@
 {
   "name": "attendance-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "University Attendance Portal Backend",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "attendance",
+    "express",
+    "postgresql",
+    "react-native"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
