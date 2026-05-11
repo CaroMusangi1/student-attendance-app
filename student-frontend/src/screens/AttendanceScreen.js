@@ -20,7 +20,7 @@ const AttendanceScreen = ({ studentId, onLogout }) => {
   const [capturedImage, setCapturedImage] = useState(null); 
   const cameraRef = useRef(null);
 
-  const SERVER_URL = 'http://192.168.0.103:3000'; 
+  const SERVER_URL = 'http://192.168.43.103:3000';
 
   const classList = [
     { id: 1, name: 'Advanced Fluid Mechanics' },

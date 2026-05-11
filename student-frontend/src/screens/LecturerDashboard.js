@@ -13,7 +13,7 @@ const LecturerDashboard = ({ onLogout, lecturerId }) => {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
 
-  const SERVER_URL = 'http://192.168.0.103:3000';
+  const SERVER_URL = 'http://192.168.43.103:3000';
   const CLASS_ID = 2; // Assuming Class 2 is Differential Geometry
 
   // Fetch report and initial session status on mount
