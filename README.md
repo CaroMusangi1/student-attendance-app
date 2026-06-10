@@ -6,8 +6,8 @@ A mobile-first student attendance system built with an Expo React Native fronten
 
 This project is split into two applications:
 
-- `attendance-backend`: REST API, authentication, attendance validation, and report generation.
-- `student-frontend`: Expo mobile app for students and lecturers.
+- attendance-backend: REST API, authentication, attendance validation, and report generation.
+- student-frontend: Expo mobile app for students and lecturers.
 
 The system is designed for classroom attendance workflows where a lecturer opens a session for a class, students sign in only while the session is active, and the backend validates proximity using GPS coordinates before recording attendance.
 
@@ -69,7 +69,7 @@ student-attendance-app/
 
 ## Backend Setup
 
-1. Open a terminal in `attendance-backend`.
+1. Open a terminal in attendance-backend.
 2. Install dependencies:
 
 ```bash
@@ -80,14 +80,14 @@ npm install
 
 The backend expects these tables:
 
-- `students`
-- `lecturers`
-- `classes`
-- `attendance`
+- students
+- lecturers
+- classes
+- attendance
 
 4. Set your environment variables.
 
-Create a `.env` file in `attendance-backend`:
+Create a .env file in attendance-backend:
 
 ```env
 PORT=3000
@@ -103,16 +103,16 @@ node server.js
 
 ## Database Notes
 
-- `server.js` defaults to `students_attendance` if `DATABASE_URL` is not provided.
-- `seed.js` currently points to `student_attendance` in its fallback connection string.
-- Use one database name consistently in your `.env` to avoid connection issues.
-- `seed.js` updates all student and lecturer password hashes to the demo password `password123`.
+- server.js defaults to students_attendance if DATABASE_URL is not provided.
+- seed.js currently points to student_attendance in its fallback connection string.
+- Use one database name consistently in your .env to avoid connection issues.
+- seed.js updates all student and lecturer password hashes to the demo password password123.
 
 If you are preparing a production or portfolio-ready deployment, replace the demo password seeding flow with a proper user management process.
 
 ## Frontend Setup
 
-1. Open a terminal in `student-frontend`.
+1. Open a terminal in student-frontend.
 2. Install dependencies:
 
 ```bash
@@ -131,12 +131,12 @@ npm start
 
 The frontend currently uses a hardcoded backend URL:
 
-- `student-frontend/src/screens/LoginScreen.js`
-- `student-frontend/src/screens/AttendanceScreen.js`
-- `student-frontend/src/screens/LecturerDashboard.js`
-- `student-frontend/NetworkTest.js`
+- student-frontend/src/screens/LoginScreen.js
+- student-frontend/src/screens/AttendanceScreen.js
+- student-frontend/src/screens/LecturerDashboard.js
+- student-frontend/NetworkTest.js
 
-Update the `SERVER_URL` or login endpoint values to match your machine or server IP address before testing on a real device. The Expo app and backend must be reachable from the same network for local development.
+Update the SERVER_URL or login endpoint values to match your machine or server IP address before testing on a real device. The Expo app and backend must be reachable from the same network for local development.
 
 ## Usage Guide
 
@@ -161,32 +161,32 @@ Update the `SERVER_URL` or login endpoint values to match your machine or server
 
 ### Authentication
 
-- `POST /api/login`
+- POST /api/login
 
 Request body:
 
 ```json
 {
-  "email": "name@example.com",
-  "password": "password123",
-  "role": "student",
-  "deviceId": "device-identifier"
+	"email": "name@example.com",
+	"password": "password123",
+	"role": "student",
+	"deviceId": "device-identifier"
 }
 ```
 
 ### Session Control
 
-- `POST /api/lecturer/toggle-session`
-- `GET /api/class-status/:classId`
+- POST /api/lecturer/toggle-session
+- GET /api/class-status/:classId
 
 ### Attendance
 
-- `POST /api/attendance`
-- `GET /api/attendance/status/:studentId/:classId`
+- POST /api/attendance
+- GET /api/attendance/status/:studentId/:classId
 
 ### Reporting
 
-- `GET /api/lecturer/report/:lecturerId`
+- GET /api/lecturer/report/:lecturerId
 
 ## Security and Validation Notes
 
@@ -198,7 +198,7 @@ Request body:
 
 ## Troubleshooting
 
-- If the app shows connection errors, confirm the backend is running and the frontend `SERVER_URL` matches your machine IP.
+- If the app shows connection errors, confirm the backend is running and the frontend SERVER_URL matches your machine IP.
 - If login fails unexpectedly, verify the database has user rows and that password hashes were seeded correctly.
 - If attendance is denied, check that the lecturer has started the session and that GPS permissions are enabled.
 - If CSV export fails, make sure the Expo file system and sharing permissions are available on the device.
@@ -206,10 +206,11 @@ Request body:
 ## Recommended Production Improvements
 
 - Move hardcoded server URLs into environment-based configuration.
-- Add backend npm scripts for `start` and `seed`.
-- Add a proper SQL migration or schema file for `init.sql`.
+- Add backend npm scripts for start and seed.
+- Add a proper SQL migration or schema file for init.sql.
 - Centralize class selection so both frontend and backend derive class data from the database.
 - Add a real JWT issuance flow if authenticated sessions are required beyond the current demo login response.
 
 ## License
-- MIT Licence
+
+MIT license 
