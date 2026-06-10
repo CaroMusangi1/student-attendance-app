@@ -7,7 +7,7 @@ const pool = new Pool({
 });
 
 async function seedPasswords() {
-    const password = 'password123'; // The universal password for your demo
+    const password = 'password123'; // The universal password for demo
     try {
         console.log("Generating fresh hash...");
         const saltRounds = 10;
